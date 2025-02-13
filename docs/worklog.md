@@ -18,6 +18,11 @@ bash build_cuda_extensions.sh  # remove the --user from the install command (we 
 python exp_runner.py --conf ./confs/dtu_gfss.conf --case dtu/dtu_scan105 --mode train
 ```
 
+5. One can then render images from the training using the radiance field by running the command:
+```
+python exp_runner.py --conf ./confs/dtu_gfss.conf --case dtu/dtu_scan105 --mode render --image_idx 0 --is_continue
+```
+
 # Useful conclusions
 - The input to the model is given as a PLY file with points, normals and colors.
 - There is a script `misc/process_custom_data.py` in which one can set scale `s` and a translation vector `[dx dy dz]` to center the point cloud at the origin and fit it into the unit sphere.
