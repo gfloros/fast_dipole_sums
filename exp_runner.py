@@ -386,7 +386,7 @@ class Runner:
         torch.save(checkpoint, os.path.join(self.base_exp_dir, 'checkpoints', 'ckpt_{:0>6d}.pth'.format(self.iter_step)))
 
 
-    def validate_image(self, idx=-1, resolution_level=-1):
+    def validate_image(self, idx=-1, resolution_level=-1, custom_pose=False, r=0, phi=0, theta=0):
         if idx < 0:
             idx = np.random.randint(self.dataset.n_images)
 
@@ -395,7 +395,13 @@ class Runner:
         if resolution_level < 0:
             resolution_level = self.validate_resolution_level
 
-        rays_o, rays_d = self.dataset.gen_rays_at(idx, resolution_level=resolution_level)
+        if custom_pose:
+            pose = self.dataset.get_camera_pose_on_unit_sphere(r, phi, theta)
+            pose_tensor = torch.from_numpy(pose).float().to(self.device)
+            rays_o, rays_d = self.dataset.gen_rays_from_spherical_coordinates(pose_tensor, resolution_level=resolution_level)
+        else:
+            rays_o, rays_d = self.dataset.gen_rays_at(idx, resolution_level=resolution_level)
+
         H, W, _ = rays_o.shape
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
         rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
@@ -440,7 +446,10 @@ class Runner:
         normal_img = None
         if len(out_normal_fine) > 0:
             normal_img = np.concatenate(out_normal_fine, axis=0)
-            rot = np.linalg.inv(self.dataset.pose_all[idx, :3, :3].detach().cpu().numpy())
+            if custom_pose:
+                rot = np.linalg.inv(pose[:3, :3])
+            else:
+                rot = np.linalg.inv(self.dataset.pose_all[idx, :3, :3].detach().cpu().numpy())
             normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None])
                           .reshape([H, W, 3, -1]) * 128 + 128).clip(0, 255)
 
@@ -453,12 +462,12 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, 'normals'), exist_ok=True)
         os.makedirs(os.path.join(self.base_exp_dir, 'depth'), exist_ok=True)
 
-        if self.mode == 'render':
+        if self.mode in ['render', 'custom_render']:
             os.makedirs(os.path.join(self.base_exp_dir, 'renders'), exist_ok=True)
 
         if len(out_rgb_fine) > 0:
             for i in range(img_fine.shape[-1]):
-                if self.mode == 'render':
+                if self.mode in ['render', 'custom_render']:
                     cv.imwrite(os.path.join(self.base_exp_dir,
                                             'renders',
                                             'render_{}.png'.format(idx)),
@@ -568,6 +577,11 @@ if __name__ == '__main__':
     parser.add_argument('--image_idx', type=int, default=0)
     parser.add_argument('--image_resolution_level', type=int, default=1)
 
+    # custom rendering arguments
+    parser.add_argument('--radius', type=float, default=5.0)
+    parser.add_argument('--phi', type=float, default=np.pi / 4.0)
+    parser.add_argument('--theta', type=float, default=-np.pi / 6.0)
+
     # mesh extraction
     parser.add_argument('--mesh_resolution', type=int, default=512)
     parser.add_argument('--use_local_scale', default=False, action="store_true")
@@ -588,6 +602,11 @@ if __name__ == '__main__':
     elif args.mode == 'render':
         runner.validate_image(idx=args.image_idx,
                               resolution_level=args.image_resolution_level)
+    elif args.mode == 'custom_render':
+        runner.validate_image(idx=args.image_idx,
+                              resolution_level=args.image_resolution_level,
+                              custom_pose=True, r=args.radius, phi=args.phi,
+                              theta=args.theta)
     elif args.mode == 'validate_mesh':
         runner.validate_mesh(scale_mesh=(not args.use_local_scale),
                              resolution=args.mesh_resolution,
