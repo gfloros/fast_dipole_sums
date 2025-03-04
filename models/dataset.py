@@ -113,6 +113,52 @@ class Dataset:
         rays_o = self.pose_all[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
         return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
 
+    def get_camera_pose_on_unit_sphere(self, r, phi, theta):
+        # Camera position on the unit sphere
+        x = r * np.cos(theta) * np.sin(phi)
+        y = r * np.sin(theta) * np.sin(phi)
+        z = r * np.cos(phi)
+        position = np.array([x, y, z])
+
+        # Forward direction (camera looks at the origin)
+        z_cam = -position / np.linalg.norm(position)
+
+        # Reference up vector (0,0,1)
+        up = np.array([0, 0, 1])
+        if np.allclose(z_cam, up):  # Handle singularity at the pole
+            up = np.array([1, 0, 0])
+
+        # Compute right and new up vectors
+        x_cam = np.cross(up, z_cam)
+        x_cam /= np.linalg.norm(x_cam)
+        y_cam = np.cross(z_cam, x_cam)
+
+        # Construct rotation matrix
+        R = np.column_stack([x_cam, y_cam, z_cam])
+
+        # Construct pose matrix (4x4)
+        pose = np.eye(4)
+        pose[:3, :3] = R
+        pose[:3, 3] = position
+        return pose
+
+    def gen_rays_from_spherical_coordinates(self, pose, resolution_level=1):
+        """
+        Generate rays at world space from a custom camera on the unit sphere.
+        """
+        H = self.H[0]
+        W = self.W[0]
+
+        tx = torch.linspace(0, W - 1, W // resolution_level)
+        ty = torch.linspace(0, H - 1, H // resolution_level)
+        pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1) # W, H, 3
+        p = torch.matmul(self.intrinsics_all_inv[0, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        rays_v = torch.matmul(pose[:3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        rays_o = pose[:3, 3].expand(rays_v.shape)  # W, H, 3
+        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+
     def gen_random_rays_at(self, img_idx, batch_size):
         """
         Generate random rays at world space from one camera.
@@ -145,4 +191,3 @@ class Dataset:
         img = cv.imread(self.images_lis[idx])
         H, W = img.shape[:2]
         return (cv.resize(img, (W // resolution_level, H // resolution_level))).clip(0, 255)
-
